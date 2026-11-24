@@ -104,7 +104,7 @@ in constructing the labels.
 @article{kaur2026lightweight,
   title   = {Cross-Dataset Structural Brain MRI Quality Assessment with a
              25,857-Parameter CNN: Capacity Is Not the Limiting Factor},
-  author  = {Kaur, Tajinder and Cheema, Sikander Singh and Kaur, Lakhwinder},
+  author  = {Tajinder Kaur,Sikander Singh Cheema,Lakhwinder Kaur},
   journal = {Magnetic Resonance Imaging},
   year    = {2026},
   doi     = {10.1016/J.MRI.2026.110859}
