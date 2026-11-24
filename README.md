@@ -1,164 +1,116 @@
-# lightweight-mri-qc
-# Lightweight CNN for Brain MRI Motion Artifact Detection
+# Lightweight CNN for Brain MRI Quality Assessment
 
-Code and cohort definitions for:
+A 25,857-parameter convolutional network for binary quality control of
+structural brain MRI, trained on ABIDE I and evaluated zero-shot on MR-ART.
 
-> **Accuracy–Efficiency Trade-offs in Cross-Dataset Brain MRI Motion Artifact
-> Detection: A 26,000-Parameter CNN Generalises With Minimal Degradation**
-> Tajinder Kaur, Sikander Singh Cheema, Lakhwinder Kaur. *Magnetic Resonance Imaging*, submitted.
-
-A convolutional network with **25,857 trainable parameters** that detects motion
-artifacts in T1-weighted structural brain MRI, evaluated in-domain on ABIDE I and
-zero-shot on the independent MR-ART dataset.
+**Paper:** Kaur T, Cheema SS, Kaur L. Cross-Dataset Structural Brain MRI
+Quality Assessment with a 25,857-Parameter CNN: Capacity Is Not the Limiting
+Factor. *Magnetic Resonance Imaging*. 2026. Accepted.
 
 ---
 
-## Headline results
+## The model
 
-| | AUROC | AUPRC | Chance AUPRC |
-|---|---|---|---|
-| ABIDE, in-domain (5×10 repeated grouped CV) | 0.898 ± 0.050 | 0.644 ± 0.141 | 0.061 |
-| MR-ART, zero-shot (no adaptation) | 0.897 (95% CI 0.864–0.929) | 0.936 | 0.606 |
+| | |
+|---|---|
+| Total parameters | 25,857 |
+| Trainable parameters | 25,633 |
+| Non-trainable | 224 (batch-normalisation running statistics) |
+| Input | 20 axial slices per volume, 128 × 128, normalised to [0, 255] |
+| Architecture | 3 × (conv 3×3 → batch norm → ReLU → 2×2 max pool), 16/32/64 filters; global average pooling; dense 32 ReLU; dropout 0.6; dense 1 sigmoid |
+| Training | Adam 1e-3, binary cross-entropy, batch 64, 40 epochs, early stopping patience 10 |
+| CPU inference | 86 ms per subject, single-threaded |
 
-Discrimination transfers with no measurable loss across scanner, acquisition
-protocol and label definition. Threshold-dependent performance does not: at the
-inherited 0.5 threshold F1 is 0.717, below the 0.754 obtained by flagging every
-scan. Selecting a threshold from **10 labelled target subjects**, with weights
-frozen, raises F1 to 0.821 ± 0.049.
+## Results
 
-Site identity alone, with no image data, predicts ABIDE quality labels at
-AUROC 0.835 — which is why we report a site-only control baseline.
+**ABIDE I, in-domain** — StratifiedGroupKFold, 5 folds × 10 repeats, 50 fits.
+Values are means ± SD across fits.
+
+| | AUROC | AUPRC |
+|---|---|---|
+| Lightweight CNN | 0.898 ± 0.050 | 0.644 ± 0.141 |
+| Random forest on image quality metrics | 0.876 ± 0.068 | 0.602 ± 0.138 |
+
+Chance AUPRC is 0.061 at the cohort prevalence of 6.1%, so the network's lift
+is 10.6×. The difference from the random forest is not significant: a paired
+subject-level bootstrap gives +0.032 AUROC, 95% CI [−0.024, +0.095].
+
+**MR-ART, zero-shot** — 327 scans, no adaptation, frozen weights.
+
+| | value |
+|---|---|
+| AUROC | 0.897 (95% CI 0.863–0.929) |
+| AUPRC | 0.936 (95% CI 0.912–0.957), chance 0.606 |
+| F1 at the inherited 0.5 threshold | 0.717 |
+| F1 after recalibration on 10 labelled target subjects | 0.822 ± 0.048 |
+
+Intervals are subject-level cluster bootstraps.
+
+**What bounds these numbers.** Site identity alone, with no image data,
+predicts ABIDE quality labels at AUROC 0.848 — most multi-site quality
+classifiers are partly recognising scanners. Within site, where that route is
+removed by construction, the network retains 0.826 against 0.500 for the
+site-only control. Leave-one-site-out AUROC is 0.791 for the network and 0.786
+for the metric-based classifier. Agreement between the two human raters is
+Cohen's kappa 0.21, which bounds what any model trained on these labels can
+achieve.
+
+**Capacity.** Under a protocol matched across architectures, the network falls
+0.046 AUROC short of ResNet-50 at 1/912th of its parameters, and exceeds
+EfficientNet-B0 and MobileNetV3-Small by 0.049 and 0.068 with bootstrap
+intervals excluding zero.
 
 ---
 
-## Reproducibility
+## Repository layout
 
-Every script writes per-fold predicted probabilities to disk **before** any
-metric is computed, so every value in the paper can be recomputed from stored
-predictions without retraining. Figures are generated from the results CSVs;
-no number is hardcoded in the plotting code.
+```
+code/      analysis scripts, one per reported result (see RESULTS_MAP.md)
+cohort/    subject lists and site assignments
+models/    trained weights
+results/   per-fold predicted probabilities, metrics, figure source data
+```
 
----
+`RESULTS_MAP.md` maps every table and figure in the paper to the script that
+produced it and the output file it reads. Every reported value derives from
+stored per-fold predictions, so each can be recomputed without retraining.
+
+## Reproducing
+
+Scripts read the prediction files in `results/` and recompute metrics; none
+requires a GPU except retraining. Random seed 42 throughout, with repeat *r*
+using `random_state = 42 + r`.
+
+Analyses reported at submission used TensorFlow 2.20.0 under Python 3.13.15;
+those added in revision used TensorFlow 2.21.0 under Python 3.13.16. Training
+used an NVIDIA A100; CPU latency was measured single-threaded on an Intel Xeon
+at 2.20 GHz, as a graph-compiled forward pass, median of 30 timed calls after
+five warm-ups.
 
 ## Data
 
-Neither dataset is redistributed here. Both are publicly available:
+Neither dataset is redistributed. Both retain their own terms of use.
 
 - **ABIDE I** — http://fcon_1000.projects.nitrc.org/indi/abide/
 - **MR-ART** — https://openneuro.org/datasets/ds004173
 
-`cohort/` contains the subject lists needed to reproduce the exact cohort.
-
-### ABIDE cohort construction
-
-Labels come **only** from the manual quality assessments distributed with ABIDE.
-No image quality metric was used at any point in label construction — selecting
-scans on metrics that later serve as classifier inputs induces circularity, and
-because those metrics carry scanner-specific signatures it also concentrates
-classes within sites.
-
-| Rater 2 | Rater 3 | Label | n |
-|---|---|---|---|
-| OK | OK | acceptable | 784 |
-| fail | fail | motion-corrupted | 5 |
-| maybe | fail | motion-corrupted | 46 |
-| any other combination | | excluded | |
-
-835 labelled scans → 45 had no accessible NIfTI → 1 excluded for non-standard
-dimensionality → **789 subjects (741 acceptable, 48 motion-corrupted;
-prevalence 6.08%)** across 17 sites, 10 of which contain both classes.
-
-### MR-ART cohort
-
-Motion score 1 → acceptable, score 3 → motion-corrupted, score 2 excluded
-(dataset convention). **327 scans (129 / 198) from 144 subjects.**
-
-100 of the 144 subjects contribute scans of *both* classes, so all MR-ART
-partitioning is done at subject level. Scan-level splitting places the same
-anatomy on both sides.
-
----
-
-## Pipeline
-
-| Script | Runs on | Produces |
-|---|---|---|
-| `01_extract_slices.py` | CPU | 20 centered axial slices/subject, 128×128 8-bit PNG |
-| `02_train_cnn.py` | GPU | CNN, 5×10 grouped CV, out-of-fold probabilities |
-| `03_ml_and_confound.py` | CPU, seconds | IQM baselines, site-only control, leave-one-site-out |
-| `04b_architecture_comparison.py` | GPU | MobileNetV3/EfficientNet/DenseNet/ResNet under matched protocol |
-| `05_mrart_zeroshot.py` | GPU | MR-ART zero-shot AUROC/AUPRC, bootstrap CIs, threshold analysis |
-| `06_recalibration.py` | CPU, seconds | label-budget recalibration curve |
-| `07_figures.py` | CPU | all figures, from results CSVs only |
-
-Each script has a `CONFIG` block at the top; set the paths there before running.
-
-Scripts 02 and 04b are resumable — completed folds are written to disk and
-skipped on rerun.
-
----
-
-## Model
-
-Three convolutional blocks (16, 32, 64 filters; 3×3, same padding), each with
-batch normalisation, ReLU and 2×2 max pooling; global average pooling; a 32-unit
-dense layer; dropout (p = 0.6); single sigmoid output. **25,857 parameters.**
-
-Global average pooling in place of flattening removes the dense layer that
-dominates parameter counts in conventional architectures, while giving
-translational tolerance suited to artifacts distributed across the image.
-
-**Positive class is motion-corrupted**, so the sigmoid outputs
-P(motion-corrupted) directly.
-
----
-
-## Evaluation notes
-
-- **Partitioning is by subject**, never by slice or scan. All 20 slices from a
-  subject fall in one fold.
-- **Early stopping uses an inner validation split** drawn from the training
-  fold. The test fold is never used for model selection or monitoring.
-- **AUPRC is interpreted against class prevalence** (0.061 ABIDE, 0.606 MR-ART).
-  At 6% prevalence a default 0.5 threshold is not meaningful — one baseline here
-  reaches AUPRC 5.9× chance with F1 = 0.000.
-- **Confidence intervals use subject-level cluster bootstrap.** Resampling scans
-  independently understates uncertainty because acquisitions from one subject
-  are correlated. No resamples are discarded on the basis of predicted values.
-- **MR-ART is never used for training, architecture selection or
-  hyperparameters**, except in the recalibration analysis where the labelled
-  budget is stated explicitly.
-
----
-
-## Requirements
-
-```
-tensorflow>=2.15
-scikit-learn
-numpy, pandas, matplotlib
-pillow, nibabel, scipy
-openpyxl
-```
-
-Training used an NVIDIA A100. Scripts 03, 06 and 07 need no GPU.
-
----
+Quality labels for ABIDE come from the manual ratings distributed with the
+dataset, using agreement between two raters. No image quality metric was used
+in constructing the labels.
 
 ## Citation
 
 ```bibtex
-@article{kaur_lightweight_mri_qc,
-  title   = {Accuracy--Efficiency Trade-offs in Cross-Dataset Brain MRI Motion
-             Artifact Detection: A 26,000-Parameter CNN Generalises With
-             Minimal Degradation},
-  author  = {Tajinder Kaur, Sikander Singh Cheema and Lakhwinder Kaur},
+@article{kaur2026lightweight,
+  title   = {Cross-Dataset Structural Brain MRI Quality Assessment with a
+             25,857-Parameter CNN: Capacity Is Not the Limiting Factor},
+  author  = {Kaur, Tajinder and Cheema, Sikander Singh and Kaur, Lakhwinder},
   journal = {Magnetic Resonance Imaging},
   year    = {2026},
-  note     = {submitted}
+  doi     = {10.1016/J.MRI.2026.110859}
 }
 ```
 
-## License
+## Licence
 
-Code released under the MIT License. The datasets retain their own terms of use.
+Code released under the MIT License.
